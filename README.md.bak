@@ -1,0 +1,27 @@
+
+# Jeju SME Dual-Positioning Strategy App
+
+웹에서 실행 가능한 **Streamlit** 앱입니다. 
+도민=생활 속 브랜드, 관광객=특별한 경험 전략을 **전략 맵 시각화 · 로드맵 관리 · 쿠폰/오퍼 생성**으로 바로 실행할 수 있게 도와줍니다.
+
+## 빠른 시작
+1) Python 3.10+ 설치 후 아래를 실행하세요:
+```
+pip install streamlit pandas graphviz plotly python-dateutil
+streamlit run streamlit_app.py
+```
+2) 브라우저에서 `http://localhost:8501` 접속
+
+## 주요 기능
+- **전략 맵(Strategy Map)**: 제주형 이중 포지셔닝 맵을 Graphviz로 시각화, 진행 현황(단계별 실행 수) 자동 집계
+- **로드맵(Roadmap)**: 단기/중기/장기 작업 등록·편집·필터·다운로드(CSV)
+- **오퍼 연구소(Offers Lab)**: 도민/관광객 세그먼트별 규칙 기반 쿠폰 코드 생성(날짜·요일·시간대·비/바람 등 조건), 간편 복사
+- **대시보드**: 진행상태/비용/임팩트 점수 간단 차트
+
+## 데이터 저장
+- 기본 샘플: `data/sample_actions.csv`
+- 앱 내에서 추가·수정 시 세션 기준으로 동작하며, 필요 시 CSV로 다운로드하여 저장/공유하세요.
+
+## 배포 팁
+- 사내/지자체 서버: `streamlit run`을 서비스로 등록
+- 클라우드(예: Streamlit Community Cloud, 작은 VM): 동일 명령으로 실행
