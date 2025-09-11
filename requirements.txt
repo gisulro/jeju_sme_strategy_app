@@ -1,5 +1,6 @@
 streamlit==1.36.0
 pandas==2.2.2
 python-dateutil==2.9.0.post0
-plotly==5.23.0          # Sankey/대시보드용 (없으면 대체코드로도 동작)
-graphviz==0.20.3        # 선택: 박스형 전략맵 (미설치 시 자동 대체)
+segno==1.6.1          # ✅ QR 생성
+plotly==5.23.0        # (선택) 더 예쁜 차트/산키
+# graphviz==0.20.3    # (선택) 박스형 전략맵; Cloud에선 packages.txt에 'graphviz' 필요
