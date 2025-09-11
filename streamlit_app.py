@@ -5,10 +5,9 @@ import pandas as pd
 from dateutil import parser
 from datetime import datetime, date, time
 
-# ================== 앱 설정 ==================
-st.set_page_config(page_title="Jeju SME · Welfare + QR Offers (Lite)", layout="wide")
+st.set_page_config(page_title="Jeju SME · Welfare + QR (Final)", layout="wide")
 
-# ================== 경로/초기데이터 ==================
+# -------------------- 경로/샘플 --------------------
 DATA_DIR = "data"
 PATH_ROADMAP = os.path.join(DATA_DIR, "actions.csv")
 PATH_SENIORS = os.path.join(DATA_DIR, "seniors.csv")
@@ -65,7 +64,6 @@ def _kor_day(dt: datetime):
     return ["월","화","수","목","금","토","일"][dt.weekday()]
 
 def check_coupon_rule(rule: dict, cart_amount: int, segment: str | None = None, now: datetime | None = None):
-    """간단 검증 로직(세그먼트/요일/시간/최소결제 확인 + 할인/기금 계산)"""
     now = now or datetime.now()
     if segment and rule.get("segment") and segment != rule["segment"]:
         return (False, "세그먼트 불일치")
@@ -80,25 +78,37 @@ def check_coupon_rule(rule: dict, cart_amount: int, segment: str | None = None, 
     care_fund = int(round(cart_amount * rule.get("care_fund_rate_pct", 0) / 100))
     return (True, {"discount": discount, "care_fund": care_fund})
 
-# ================ 사이드바 ================
-st.sidebar.title("제주 소상공인 × 복지 통합 보드 (Lite)")
+# ---- QR 생성: segno 있으면 내부 PNG, 없으면 None (호출부에서 외부 QR 폴백) ----
+def qr_png_bytes(data_url: str, scale: int = 6):
+    try:
+        import segno
+        buf = io.BytesIO()
+        segno.make(data_url).save(buf, kind="png", scale=scale)
+        return buf.getvalue()
+    except Exception:
+        return None  # 폴백은 호출부에서
+
+# -------------------- 사이드바 --------------------
+st.sidebar.title("제주 소상공인 × 복지 통합 보드 + QR")
 STORE = st.sidebar.text_input("상호명", value="혼저커피(예시)")
 PUBLIC_URL = st.sidebar.text_input(
-    "앱 공개 URL", value=os.environ.get("PUBLIC_APP_URL", "http://localhost:8501"),
-    help="Cloud 주소 또는 로컬 주소(예: https://<your-app>.streamlit.app)"
+    "앱 공개 URL",
+    value=os.environ.get("PUBLIC_APP_URL", "http://localhost:8501"),
+    help="Cloud 주소 또는 로컬 주소 (예: https://your-app.streamlit.app)"
 )
-st.sidebar.caption("CSV 업로드로 샘플을 대체할 수 있습니다.")
-up_actions = st.sidebar.file_uploader("로드맵 CSV", type=["csv"])
-up_seniors = st.sidebar.file_uploader("어르신 명부 CSV", type=["csv"])
-up_visits  = st.sidebar.file_uploader("방문기록 CSV", type=["csv"])
-up_fund    = st.sidebar.file_uploader("기금 장부 CSV", type=["csv"])
+st.sidebar.caption("CSV 업로드 시 즉시 반영됩니다.")
+up_actions = st.sidebar.file_uploader("로드맵 CSV 업로드", type=["csv"])
+up_seniors = st.sidebar.file_uploader("어르신 명부 CSV 업로드", type=["csv"])
+up_visits  = st.sidebar.file_uploader("방문기록 CSV 업로드", type=["csv"])
+up_fund    = st.sidebar.file_uploader("기금 장부 CSV 업로드", type=["csv"])
 
-# ================ 데이터 적재 ================
+# -------------------- 데이터 적재 --------------------
 if "actions" not in st.session_state:  st.session_state.actions = load_df(PATH_ROADMAP, pd.DataFrame(SAMPLE_ACTIONS))
 if "seniors" not in st.session_state:  st.session_state.seniors = load_df(PATH_SENIORS)
 if "visits"  not in st.session_state:  st.session_state.visits  = load_df(PATH_VISITS)
 if "fund"    not in st.session_state:  st.session_state.fund    = load_df(PATH_FUND)
 
+# 업로드 즉시 반영
 if up_actions is not None: st.session_state.actions = pd.read_csv(up_actions)
 if up_seniors is not None: st.session_state.seniors = pd.read_csv(up_seniors)
 if up_visits  is not None: st.session_state.visits  = pd.read_csv(up_visits)
@@ -118,17 +128,21 @@ if "ts" in fund:
     try: fund["ts"] = pd.to_datetime(fund["ts"])
     except: pass
 
-# ================ 헤더 & QR 검증 모드 ================
-st.title("🌊 제주 소상공인 · 복지 통합 실행 보드 (QR Offers)")
+# -------------------- 헤더 & URL 파라미터 --------------------
+st.title("🌊 제주 소상공인 · 복지 통합 실행 보드 (Final)")
 
 try:
-    params = st.query_params  # 1.33+
+    params = st.query_params
 except Exception:
     params = st.experimental_get_query_params()
 
-r_param = params.get("r") if isinstance(params, dict) else None
-if isinstance(r_param, list): r_param = r_param[0]
+def qget(key: str):
+    if not isinstance(params, dict): return None
+    v = params.get(key)
+    return v[0] if isinstance(v, list) else v
 
+# ① 쿠폰 QR 스캔 즉시 검증 (?r=...)
+r_param = qget("r")
 if r_param:
     st.subheader("🔎 QR 쿠폰 즉시 검증")
     try:
@@ -150,24 +164,47 @@ if r_param:
     except Exception as e:
         st.error(f"QR 쿠폰 규칙 해석 오류: {e}")
 
-# ================ 탭 ================
-tabs = st.tabs(["전략 요약", "로드맵", "복지 허브", "오퍼 연구소(QR)", "기금/대시보드"])
+# ② 어르신 체크인 QR 스캔 모드 (?mode=checkin&sid=...)
+if qget("mode") == "checkin" and qget("sid"):
+    st.subheader("🧓 QR 체크인")
+    sid = qget("sid")
+    row = seniors[seniors["senior_id"] == sid]
+    if len(row)==0:
+        st.error(f"명부에 없는 ID입니다: {sid}")
+    else:
+        row = row.iloc[0]
+        st.info(f"{row['name']} 어르신 체크인")
+        pin_in = st.text_input("PIN 입력")
+        systolic = st.number_input("수축기 혈압", 0, 400, 0)
+        diastolic = st.number_input("이완기 혈압", 0, 300, 0)
+        weight = st.number_input("체중(kg)", 0.0, 300.0, 0.0, step=0.1)
+        notes = st.text_input("비고")
+        if st.button("체크인 기록"):
+            if str(row.get("pin","")) != pin_in:
+                st.error("PIN 불일치")
+            else:
+                v = {"ts": datetime.utcnow().isoformat(), "senior_id": sid, "name": row["name"],
+                     "store": STORE, "systolic": systolic or "", "diastolic": diastolic or "",
+                     "weight_kg": weight or "", "notes": notes}
+                visits = pd.concat([visits, pd.DataFrame([v])], ignore_index=True)
+                seniors.loc[seniors["senior_id"]==sid, "last_visit_date"] = date.today().isoformat()
+                save_df(PATH_VISITS, visits); save_df(PATH_SENIORS, seniors)
+                st.success("체크인 완료! (장부에 반영됨)")
+
+# -------------------- 탭 --------------------
+tabs = st.tabs(["전략 요약", "로드맵", "복지 허브(업로드 반영 + QR)", "오퍼 연구소(QR 쿠폰)", "기금/대시보드"])
 
 # ---- 1) 전략 요약 ----
 with tabs[0]:
-    st.subheader("📌 전략 요약(경량)")
+    st.subheader("📌 전략 요약")
     counts = actions.groupby("phase")["task"].count().to_dict()
     st.markdown(f"""
 - **생활(도민) 실행**: {counts.get('단기(1~6개월)',0)}
 - **체험(관광객) 실행**: {counts.get('중기(6~12개월)',0)}
 - **복지 허브 지표**: 어르신 {len(seniors)}명 / 방문기록 {len(visits)}건 / 기금 {len(fund)}건
 """)
-    try:
-        # 간단 막대 그래프(내장 차트)
-        if len(actions):
-            st.bar_chart(actions.groupby("phase")["task"].count())
-    except Exception:
-        pass
+    if len(actions):
+        st.bar_chart(actions.groupby("phase")["task"].count())
 
 # ---- 2) 로드맵 ----
 with tabs[1]:
@@ -207,13 +244,17 @@ with tabs[1]:
     st.dataframe(adf, use_container_width=True)
     st.download_button("로드맵 CSV 다운로드", adf.to_csv(index=False).encode("utf-8-sig"), "jeju_roadmap.csv", "text/csv")
 
-# ---- 3) 복지 허브 ----
+# ---- 3) 복지 허브 (업로드 반영 + 체크인 QR 생성) ----
 with tabs[2]:
-    st.subheader("🧓 복지 허브: 어르신 등록 · 안부체크 · 경보")
-    cA, cB = st.columns(2)
+    st.subheader("🧓 복지 허브(업로드 반영 + QR 생성)")
+    colA, colB = st.columns([1,1])
 
-    with cA:
-        st.markdown("### 어르신 등록")
+    with colA:
+        st.markdown("### 어르신 명부")
+        st.dataframe(seniors, use_container_width=True)
+        st.download_button("명부 CSV 다운로드", seniors.to_csv(index=False).encode("utf-8-sig"), "seniors.csv", "text/csv")
+
+        st.markdown("### 신규 등록")
         with st.form("add_senior", clear_on_submit=True):
             name = st.text_input("성함")
             phone = st.text_input("연락처")
@@ -234,14 +275,10 @@ with tabs[2]:
                 save_df(PATH_SENIORS, seniors)
                 st.success(f"등록 완료! ID:{sid}, PIN:{pin}")
 
-        st.markdown("### 어르신 명부")
-        st.dataframe(seniors, use_container_width=True)
-        st.download_button("명부 CSV 다운로드", seniors.to_csv(index=False).encode("utf-8-sig"), "seniors.csv", "text/csv")
-
-    with cB:
-        st.markdown("### 매장 방문 체크인")
+    with colB:
+        st.markdown("### 체크인(현장 처리)")
         if len(seniors)==0:
-            st.info("먼저 어르신을 등록하세요.")
+            st.info("먼저 어르신을 등록하거나 CSV를 업로드하세요.")
         else:
             sel = st.selectbox("대상자", seniors["name"]+" ("+seniors["senior_id"]+")")
             sid = sel.split("(")[-1][:-1]
@@ -250,7 +287,6 @@ with tabs[2]:
             diastolic = st.number_input("이완기 혈압", 0, 300, 0)
             weight = st.number_input("체중(kg)", 0.0, 300.0, 0.0, step=0.1)
             notes = st.text_input("비고")
-            earn = st.number_input("방문 포인트(+)", 0, 10000, 0, step=10)
             if st.button("체크인 기록"):
                 row = seniors[seniors["senior_id"]==sid].iloc[0]
                 if str(row.get("pin","")) != pin_in:
@@ -261,25 +297,31 @@ with tabs[2]:
                          "weight_kg": weight or "", "notes": notes}
                     visits = pd.concat([visits, pd.DataFrame([v])], ignore_index=True)
                     seniors.loc[seniors["senior_id"]==sid, "last_visit_date"] = date.today().isoformat()
-                    seniors.loc[seniors["senior_id"]==sid, "welfare_points"] = pd.to_numeric(
-                        seniors.loc[seniors["senior_id"]==sid, "welfare_points"]).fillna(0) + earn
                     save_df(PATH_VISITS, visits); save_df(PATH_SENIORS, seniors)
                     st.success("체크인 완료!")
 
-        st.markdown("### 미방문 경보")
-        th = st.slider("경보 기준(일)", 3, 30, 7)
-        tmp = seniors.copy()
-        tmp["last_visit_date"] = tmp["last_visit_date"].apply(clean_date)
-        tmp["days_from_last"] = tmp["last_visit_date"].apply(lambda d: (date.today()-d).days if isinstance(d, date) else 10**9)
-        alert_df = tmp[tmp["days_from_last"] >= th].sort_values("days_from_last", ascending=False)
-        st.warning(f"경보 대상 {len(alert_df)}명")
-        st.dataframe(alert_df[["senior_id","name","phone","caregiver","caregiver_phone","risk_tier","last_visit_date","days_from_last"]], use_container_width=True)
+        st.markdown("### 🧾 어르신별 ‘체크인용’ QR 생성")
+        if len(seniors):
+            who = st.selectbox("QR 생성 대상", seniors["name"]+" ("+seniors["senior_id"]+")", key="qrsel")
+            sid2 = who.split("(")[-1][:-1]
+            checkin_url = f"{PUBLIC_URL}?mode=checkin&sid={urllib.parse.quote(sid2)}"
+            st.write("체크인 URL:")
+            st.code(checkin_url, language="text")
+
+            png = qr_png_bytes(checkin_url, scale=6)
+            if png:
+                st.image(png, caption="스마트폰 스캔 → 체크인 화면", use_column_width=False)
+                st.download_button("체크인 QR PNG 다운로드", data=png, file_name=f"senior_checkin_{sid2}.png", mime="image/png")
+            else:
+                qr_url = "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=" + urllib.parse.quote_plus(checkin_url)
+                st.image(qr_url, caption="(외부 서비스) 스캔하여 체크인", use_column_width=False)
+                st.write(f"[QR 링크 열기]({qr_url})")
 
         st.markdown("### 방문 기록")
         st.dataframe(visits.sort_values("ts", ascending=False), use_container_width=True)
         st.download_button("방문기록 CSV", visits.to_csv(index=False).encode("utf-8-sig"), "visits.csv", "text/csv")
 
-# ---- 4) 오퍼 연구소(QR) ----
+# ---- 4) 오퍼 연구소(QR 쿠폰) ----
 with tabs[3]:
     st.subheader("🎟️ 오퍼 연구소 (QR 쿠폰)")
     c = st.columns(4)
@@ -309,23 +351,20 @@ with tabs[3]:
         st.json(rule, expanded=False)
 
         enc = urllib.parse.quote(json.dumps(rule, ensure_ascii=False))
-        verify_url = f"{PUBLIC_URL}?verify=1&r={enc}"
+        verify_url = f"{PUBLIC_URL}?r={enc}"
         st.write("검증 URL:")
         st.code(verify_url, language="text")
 
-        # QR 생성 (segno만 사용 – 가벼움)
-        try:
-            import segno
-            buf = io.BytesIO()
-            segno.make(verify_url).save(buf, kind="png", scale=6)
-            st.image(buf.getvalue(), caption="스마트폰 카메라로 스캔 → 검증 화면", use_column_width=False)
-            st.download_button("QR PNG 다운로드", data=buf.getvalue(), file_name=f"coupon_{code}.png", mime="image/png")
-        except Exception as e:
-            st.warning(f"QR 생성 라이브러리(segno) 미설치 또는 오류: {e}")
+        png = qr_png_bytes(verify_url, scale=6)
+        if png:
+            st.image(png, caption="QR 스캔 → 쿠폰 검증 화면", use_column_width=False)
+            st.download_button("쿠폰 QR PNG 다운로드", data=png, file_name=f"coupon_{code}.png", mime="image/png")
+        else:
+            qr_url = "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=" + urllib.parse.quote_plus(verify_url)
+            st.image(qr_url, caption="(외부 서비스) 스캔하여 쿠폰 검증", use_column_width=False)
+            st.write(f"[QR 링크 열기]({qr_url})")
 
         st.download_button("쿠폰 규칙 JSON", data=pd.Series(rule).to_json(), file_name=f"coupon_{code}.json")
-
-    st.caption("도민=평일/아침, 관광객=주말/오후 중심. 결제의 n%는 돌봄기금 자동 적립.")
 
 # ---- 5) 기금/대시보드 ----
 with tabs[4]:
@@ -371,4 +410,4 @@ with tabs[4]:
                 vdf = visits.copy(); vdf["ts"] = pd.to_datetime(vdf["ts"]).dt.date
                 st.bar_chart(vdf.groupby("ts")["name"].count())
         except Exception:
-            st.caption("차트 폴백을 표시할 데이터가 부족하거나 환경이 제한되어 있습니다.")
+            st.caption("차트 표시를 건너뜁니다.")

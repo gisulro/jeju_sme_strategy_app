@@ -1,4 +1,4 @@
 streamlit==1.36.0
 pandas==2.2.2
 python-dateutil==2.9.0.post0
-segno==1.6.1
+segno==1.6.1    # 설치 실패해도 코드가 외부 QR로 폴백하므로 동작함
